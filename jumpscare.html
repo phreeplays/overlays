@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phree WRLD Jumpscare</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  #pic, #vid { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; }
+</style>
+</head>
+<body>
+<img id="pic" alt="">
+<video id="vid" playsinline></video>
+<audio id="snd"></audio>
+<script>
+  // Streamer.bot sends the gif and sound inside the message, so this page
+  // works from your PC (OBS) or from a web link (Chaos HUD).
+  // Fallback: if no data comes with the message, load from the jumpscares folder next to this page.
+  const FOLDER = "jumpscares/";
+  const VOLUME = 1.0;        // 0.0 to 1.0 (chat level is set by the OBS mixer slider)
+  const MIN_SHOW_MS = 2500;  // shortest time a gif stays up
+  const MAX_SHOW_MS = 4000;  // longest time anything stays up (cuts gif, video and sound)
+  const WS_URL = "ws://127.0.0.1:8080/";
+
+  const pic = document.getElementById("pic");
+  const vid = document.getElementById("vid");
+  const snd = document.getElementById("snd");
+  let hideTimer, minTimer, minDone = false, soundDone = false;
+
+  function src(name, data) {
+    if (data) return data;
+    return FOLDER + encodeURIComponent(name) + "?t=" + Date.now();
+  }
+
+  function hideAll() {
+    clearTimeout(hideTimer); clearTimeout(minTimer);
+    pic.style.display = "none"; pic.removeAttribute("src");
+    vid.pause(); vid.style.display = "none"; vid.removeAttribute("src"); vid.load();
+    snd.pause(); snd.removeAttribute("src");
+  }
+
+  function tryHideGif() { if (minDone && soundDone) hideAll(); }
+
+  function scare(d) {
+    hideAll();
+    const file = d.file;
+    const isVideo = /\.(mp4|webm)$/i.test(file);
+    hideTimer = setTimeout(hideAll, MAX_SHOW_MS);
+
+    if (isVideo) {
+      vid.src = src(file, d.fileData);
+      vid.volume = VOLUME;
+      vid.style.display = "block";
+      vid.onended = hideAll;
+      vid.play().catch(() => {});
+      return;
+    }
+
+    pic.src = src(file, d.fileData);
+    pic.style.display = "block";
+    const hasSound = !!(d.sound || d.soundData);
+    minDone = false; soundDone = !hasSound;
+    minTimer = setTimeout(() => { minDone = true; tryHideGif(); }, MIN_SHOW_MS);
+    if (hasSound) {
+      snd.src = src(d.sound, d.soundData);
+      snd.volume = VOLUME;
+      snd.onended = () => { soundDone = true; tryHideGif(); };
+      snd.onerror = () => { soundDone = true; tryHideGif(); };
+      snd.play().catch(() => { soundDone = true; tryHideGif(); });
+    }
+  }
+
+  function connect() {
+    const ws = new WebSocket(WS_URL);
+    ws.onopen = () => ws.send(JSON.stringify({ request: "Subscribe", id: "jumpscare-sub", events: { General: ["Custom"] } }));
+    ws.onmessage = (e) => {
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      const d = (m && m.data) ? m.data : m;
+      if (d && d.event === "jumpscare" && d.file) scare(d);
+    };
+    ws.onclose = () => setTimeout(connect, 3000);
+    ws.onerror = () => ws.close();
+  }
+  connect();
+</script>
+</body>
+</html>
